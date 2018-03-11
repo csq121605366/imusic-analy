@@ -108,24 +108,8 @@
   </div>
 
   <script src="https://cdn.bootcss.com/jquery/2.2.1/jquery.min.js"></script>
-  <script src="./MusicVisulizer.js"></script>
   <script>
     $(function () {
-      var size = 64;
-      var Dots = [];
-      var box = $('#box').get(0);
-      var width, height;
-      var canvas = document.createElement('canvas');
-      var ctx = canvas.getContext('2d');
-      var mv = new MusicV({
-        size: size,
-        visualizer: draw
-      })
-      box.appendChild(canvas);
-      resize();
-      window.onresize = resize;
-
-
       function str2ab(str) {
         var buf = new ArrayBuffer(str.length * 4);
         var bufView = new Uint32Array(buf);
@@ -134,10 +118,19 @@
         }
         return buf;
       }
-      function random(m, n) {
-        return Math.round(Math.random() * (n - m) + m);
+      function changeVolume(percent) {
+        // gainNode.gain.value = percent * percent;
+        gainNode.gain.setTargetAtTime(percent, audioCtx.currentTime + 1, 0.5);
       }
-
+      function visualizer() {
+        var arr = new Uint8Array(analyser.frequencyBinCount);
+        function v() {
+          analyser.getByteFrequencyData(arr);
+          draw(arr);
+          requestAnimationFrame(v);
+        }
+        requestAnimationFrame(v);
+      }
       function resize() {
         height = box.clientHeight;
         width = box.clientWidth;
@@ -148,8 +141,6 @@
       function draw(arr) {
         ctx.clearRect(0, 0, width, height);
         var w = width / size;
-        var cw = w * 0.6;
-        var ch = cw > 10 ? 10 : cw;
         if (draw.type == 'column') {
           for (let i = 0; i < size; i++) {
             var h = arr[i] / 256 * height;
@@ -159,20 +150,12 @@
             line.addColorStop(1, 'green');
             ctx.fillStyle = line;
             ctx.fillRect(w * i, height - h, w * 0.6, h);
-            ctx.fillRect(w * i, height - (Dots[i].cap + ch), cw, ch);
-            Dots[i].cap--;
-            if (Dots[i].cap <= 0) {
-              Dots[i].cap = 0;
-            }
-            if (h > 0 && Dots[i].cap < h + 40) {
-              Dots[i].cap = h + 40 >= height - ch ? height - ch : h + 40;
-            }
           }
         } else if (draw.type == 'dots') {
           for (let i = 0; i < size; i++) {
             ctx.beginPath();
             var o = Dots[i];
-            var r = 10 + arr[i] / 256 * (height > width ? width : height) / 10;
+            var r = arr[i] / 256 * 50;
             ctx.arc(o.x, o.y, r, 0, Math.PI * 2);
             // ctx.strokeStyle = '#fff';
             // ctx.stroke();
@@ -181,41 +164,54 @@
             g.addColorStop(1, o.color);
             ctx.fillStyle = g;
             ctx.fill();
-            o.x += o.vx;
-            if (o.x > width) {
-              o.x = 0;
-            }
           }
         }
       }
 
-
+      function random(m, n) {
+        return Math.round(Math.random() * (n - m) + m);
+      }
       function getDots() {
         Dots = [];
         for (let i = 0; i < size; i++) {
           var x = random(0, width);
           var y = random(0, height);
-          var color = `rgba(${random(0, 255)}, ${random(0, 255)}, ${random(0, 255)},0)`
+          var color = `rgb(${random(0, 255)}, ${random(0, 255)}, ${random(0, 255)})`
           Dots.push({
             x: x,
             y: y,
-            vx: random(1, 4),
-            color: color,
-            cap: 0 //柱状上的小点距离柱状的长度
+            color: color
           })
         }
       }
 
+      var audioCtx = new (window.AudioContext || window.webkitAudioContext)(); // declare new audio context
+      var xhr = new XMLHttpRequest();
+      var gainNode = audioCtx.createGain();
+      var analyser = audioCtx.createAnalyser();
+      var size = 128;
+      analyser.fftsize = size * 2;
+      analyser.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      var source = null;
+      var count = 0;
+      var Dots = [];
+      var box = $('#box').get(0);
+      var width, height;
+      var canvas = document.createElement('canvas');
+      var ctx = canvas.getContext('2d');
+      box.appendChild(canvas);
+      resize();
 
+      window.onresize = resize;
 
-
-
+      visualizer();
 
       $('#volume').on('change', function () {
-        mv.changeVolume(this.value / this.max);
+        changeVolume(this.value / this.max);
       })
       $('#pause').on('click', function () {
-        mv.stop();
+        source && source[source.stop ? 'stop' : 'noteOff']();
         $('.song').removeClass('active');
       })
 
@@ -229,7 +225,28 @@
       $('.song').on('click', function () {
         $this = $(this);
         $this.addClass('active').siblings().removeClass('active');
-        mv.play($this.data('url'));
+        var n = ++count;
+        source && source.stop();
+        xhr.abort();
+        xhr.open('GET', $this.data('url'));
+        xhr.responseType = 'arraybuffer';
+        xhr.onload = function () {
+          if (n !== count) return;
+          audioCtx.decodeAudioData(xhr.response, function (buffer) {
+            if (n !== count) return;
+            // use the dec​oded data here
+            var bufferSource = audioCtx.createBufferSource();
+            bufferSource.buffer = buffer;
+            // bufferSource.connect(gainNode);
+            // bufferSource.connect(audioCtx.destination);
+            bufferSource.connect(analyser);
+            bufferSource.start(0);
+            source = bufferSource;
+          }, function (err) {
+            console.log(err);
+          });
+        }
+        xhr.send();
       })
 
 
